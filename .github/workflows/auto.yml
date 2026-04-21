@@ -61,6 +61,7 @@ jobs:
             echo "rooms=${{ secrets.HUYA_ROOMS }}" >> $GITHUB_OUTPUT
           fi
 
+
       # ==============================================
       # ✅ 启动虚拟桌面 + 运行脚本（GitHub 自带 Chrome，不用装！）
       # ==============================================
@@ -68,6 +69,7 @@ jobs:
         env:
           HUYA_COOKIE: ${{ secrets.HUYA_COOKIE }}
           HUYA_ROOMS: ${{ steps.get-rooms.outputs.rooms }}
+          SEND_KEY: ${{ secrets.SEND_KEY }}  # <--- 补上这一行，脚本才能读到推送 Key
           HEADLESS: "true"
         run: |
           xvfb-run -a python main.py
