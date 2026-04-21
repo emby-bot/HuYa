@@ -9,7 +9,6 @@ import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -21,20 +20,16 @@ class HuYaAuto:
     def __init__(self):
         self.debug = False
         self.msg_logs = []
-        self.enable_push = False 
-        
         self.cookie = os.getenv('HUYA_COOKIE', '').strip()
         self.rooms = self._parse_rooms(os.getenv('HUYA_ROOMS', ''))
-        self.send_key = os.getenv('SEND_KEY', '').strip()
 
         if not self.cookie:
             print("[ERROR] 未设置 HUYA_COOKIE"); sys.exit(1)
-        
         if not self.rooms:
             self.rooms = [518512, 518511]
 
         self.driver = self._init_browser()
-        self.wait = WebDriverWait(self.driver, 10)
+        self.wait = WebDriverWait(self.driver, 15)
 
     def _parse_rooms(self, rooms_str):
         if not rooms_str: return []
@@ -45,16 +40,9 @@ class HuYaAuto:
         if not self.debug: chrome_options.add_argument('--headless=new')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--mute-audio')
         chrome_options.add_argument('--window-size=1920,1080')
-        chrome_options.add_experimental_option("prefs", {"profile.managed_default_content_settings.images": 2})
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
 
     def login(self):
@@ -77,10 +65,8 @@ class HuYaAuto:
         self.driver.get(cfg.URLS["pay_index"])
         time.sleep(3)
         try:
-            pack_tab = self.wait.until(EC.element_to_be_clickable((By.ID, cfg.PAY_PAGE["pack_tab"])))
-            pack_tab.click()
+            self.driver.execute_script(f"document.getElementById('{cfg.PAY_PAGE['pack_tab']}').click();")
             time.sleep(2)
-            # 这里的 JS 获取数量是原脚本逻辑，非常稳
             n = self.driver.execute_script('''
                 const items = document.querySelectorAll('li[data-num]');
                 for (let item of items) {
@@ -93,72 +79,79 @@ class HuYaAuto:
             return count
         except: return 0
 
-    def send_to_room_in_situ(self, rid, count):
-        """完全对齐原脚本的物理点击逻辑"""
+    def send_to_room_logic(self, rid, count):
+        """完全基于 JS 注入的送礼逻辑，彻底解决悬停和跳转截断问题"""
         if count <= 0: return "无粮跳过"
         try:
-            # 1. 进房拿参数
+            # 1. 提取参数
             self.driver.get(cfg.URLS["room_base"].format(rid))
             time.sleep(5)
             lp = self.driver.execute_script('return document.body.getAttribute("data-lp")')
             gid = self.driver.execute_script('return document.body.getAttribute("data-gid")')
-            
-            if not lp or not gid: return "❌ 参数获取失败"
+            if not lp: return "❌ 获取参数失败"
 
-            # 2. 进礼物接口 (原脚本最稳的环节)
+            # 2. 进入接口页
             self.driver.get(cfg.URLS["gift_tab"].format(lp=lp, gid=gid))
             time.sleep(4)
 
-            # 3. 查找虎粮 (EC.presence_of_all_elements_located 是原脚本写法)
-            items = self.wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, cfg.GIFT["item_class"])))
-            hu_liang = None
-            for item in items:
-                if "虎粮" in item.text:
-                    hu_liang = item
-                    break
-            
-            if not hu_liang: return "❌ 未找到虎粮"
+            # 3. 执行 JS 送礼（避开所有物理模拟）
+            res = self.driver.execute_script(f'''
+                var targetName = "虎粮";
+                var sendCount = "{count}";
+                var items = document.querySelectorAll(".{cfg.GIFT['item_class']}");
+                var target = Array.from(items).find(i => i.innerText.includes(targetName));
+                
+                if (!target) return "NOT_FOUND";
+                
+                // 模拟选择
+                target.click();
+                
+                // 注入数量并触发事件
+                var inp = document.querySelector("{cfg.GIFT['input_css']}");
+                if (inp) {{
+                    inp.value = sendCount;
+                    inp.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                }}
+                
+                // 点击赠送
+                var btn = document.querySelector(".{cfg.GIFT['send_class']}");
+                if (btn) btn.click();
+                
+                return "SUCCESS";
+            ''')
 
-            # 4. 模拟原脚本 ActionChains 悬停
-            ActionChains(self.driver).move_to_element(hu_liang).pause(1).perform()
-            time.sleep(1)
+            if res != "SUCCESS": return f"❌ {res}"
 
-            # 5. 自定义数量
-            inp = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, cfg.GIFT["input_css"])))
-            inp.click()
-            inp.clear()
-            inp.send_keys(str(count))
-            time.sleep(1)
+            # 4. 处理二次确认弹窗
+            time.sleep(2)
+            self.driver.execute_script(f'''
+                var confirm = document.querySelector(".{cfg.GIFT['confirm_class']}");
+                if (confirm) confirm.click();
+            ''')
 
-            # 6. 赠送
-            send_btn = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, cfg.GIFT["send_class"])))
-            send_btn.click()
-            time.sleep(1)
-
-            # 7. 二次确认 (关键：原脚本是通过 wait 等待并点击)
-            confirm_btn = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, cfg.GIFT["confirm_class"])))
-            confirm_btn.click()
-            
-            # 核心改进：在此处强制原地等待！
-            # 只有这样才能确保第一个房间的 POST 请求不被 get() 打断
-            print(f"  [WAIT] 等待 {rid} 房间结算中...")
-            time.sleep(8) 
-            
+            # 5. 关键：原地停顿，确保异步 POST 请求在页面跳转前完成
+            print(f"  [WAIT] 房间 {rid} 正在发送并等待结算...")
+            time.sleep(10) 
             return f"🚀 送出 {count} 个"
+
         except Exception as e:
-            # 打印具体报错，方便 debug
-            print(f"  [DEBUG] 过程异常详情: {str(e)[:50]}")
-            return "❌ 送礼失败"
+            return "❌ 运行异常"
 
     def daily_check_in(self, rid):
-        """打卡放在送礼完全结束后执行"""
         try:
             self.driver.get(cfg.URLS["room_base"].format(rid))
             time.sleep(6)
-            badge = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "FanClubHd--UAIAw8vo8FGSKqVwLp7A")))
-            self.driver.execute_script("var e=document.createEvent('MouseEvents');e.initMouseEvent('mouseover',true,false,window,0,0,0,0,0,false,false,false,false,0,null);arguments[0].dispatchEvent(e);", badge)
+            # 使用 JS 模拟悬停打卡，比 ActionChains 稳
+            self.driver.execute_script('''
+                var badge = document.querySelector(".FanClubHd--UAIAw8vo8FGSKqVwLp7A");
+                if (badge) {
+                    var ev = new MouseEvent('mouseover', {bubbles: true});
+                    badge.dispatchEvent(ev);
+                }
+            ''')
             time.sleep(3)
-            btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(@class, 'Btn--giEMQ9MN7LbLqKHP79BQ') and contains(text(), '打卡')]")))
+            btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), '打卡')]")))
             self.driver.execute_script("arguments[0].click();", btn)
             return "✅ 打卡成功"
         except: return "ℹ️ 已打卡"
@@ -168,18 +161,20 @@ class HuYaAuto:
         try:
             if not self.login(): return
             total = self.get_hl_count()
-            if total <= 0: return
+            if total <= 0:
+                print("背包无虎粮，任务结束"); return
                 
             for i, rid in enumerate(self.rooms):
                 num = (total // len(self.rooms) + (1 if i < (total % len(self.rooms)) else 0))
-                print(f"\n>>> 房间: {rid} (目标: {num})")
+                print(f"\n>>> 房间: {rid} (任务数量: {num})")
                 
-                # 顺序：先送礼 (原地等待结算) -> 再去直播间打卡
-                g_res = self.send_to_room_in_situ(rid, num)
-                c_res = self.daily_check_in(rid)
+                # 先执行送礼并原地等待
+                g_result = self.send_to_room_logic(rid, num)
+                # 再跳转直播间打卡
+                c_result = self.daily_check_in(rid)
                 
-                msg = f"{g_res}； {c_res} (房间 {rid})"
-                print(f"结果: {msg}")
+                print(f"结果: {g_result}； {c_result}")
+                time.sleep(2)
         finally:
             if hasattr(self, 'driver'): self.driver.quit()
 
