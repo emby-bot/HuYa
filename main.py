@@ -106,58 +106,41 @@ class HuYaAuto:
             return "✅ 打卡成功"
         except: return "ℹ️ 已打卡"
 
-    def send_to_room(self, count):
+    def send_to_room_in_situ(self, count):
+        """原地送礼逻辑：通过直播间包裹面板"""
         if count <= 0: return "无粮跳过"
         try:
-            # 等待 body 属性加载
-            time.sleep(3)
-            lp = self.driver.execute_script('return document.body.getAttribute("data-lp")')
-            gid = self.driver.execute_script('return document.body.getAttribute("data-gid")')
-            
-            if not lp or not gid:
-                print("[WARN] 无法从 body 获取参数，尝试等待渲染...")
-                time.sleep(5)
-                lp = self.driver.execute_script('return document.body.getAttribute("data-lp")')
-                gid = self.driver.execute_script('return document.body.getAttribute("data-gid")')
+            # 1. 点击包裹按钮 (通常在礼物栏右侧)
+            pack_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@data-node-type='bag-btn'] | //p[contains(text(), '包裹')]/..")))
+            self.driver.execute_script("arguments[0].click();", pack_btn)
+            time.sleep(2)
 
-            if not lp or not gid: return "❌ 获取房参失败"
-
-            # 切换到礼物面板页
-            self.driver.get(cfg.URLS["gift_tab"].format(lp=lp, gid=gid))
-            time.sleep(5)
-            
-            # 找到虎粮
-            items = self.wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, cfg.GIFT["item_class"])))
-            hl = next((i for i in items if "虎粮" in i.text), None)
-            if not hl: return "❌ 未发现虎粮"
-
-            # 模拟悬停激活输入框
-            ActionChains(self.driver).move_to_element(hl).perform()
+            # 2. 查找虎粮项
+            hl_xpath = "//li[contains(@title, '虎粮')] | //div[contains(@title, '虎粮')] | //p[contains(text(), '虎粮')]/ancestor::li"
+            hl_item = self.wait.until(EC.presence_of_element_located((By.XPATH, hl_xpath)))
+            self.driver.execute_script("arguments[0].click();", hl_item)
             time.sleep(1)
-            
-            inp = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, cfg.GIFT["input_css"])))
-            inp.click()
-            inp.send_keys(Keys.CONTROL + "a")
-            inp.send_keys(Keys.BACKSPACE)
-            
-            self.driver.execute_script("""
-                arguments[0].value = arguments[1];
-                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
-                arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
-            """, inp, str(count))
-            time.sleep(1.5)
 
-            # 点击赠送
-            send_btn = self.driver.find_element(By.CLASS_NAME, cfg.GIFT["send_class"])
+            # 3. 设置数量 (如果有自定义输入框)
+            try:
+                # 虎牙包裹面板通常点击物品后，右侧或下方会出现赠送按钮和数量选择
+                num_input = self.driver.find_element(By.CSS_SELECTOR, ".gift-count-input, .custom-input")
+                num_input.click()
+                num_input.send_keys(Keys.CONTROL + "a")
+                num_input.send_keys(Keys.BACKSPACE)
+                num_input.send_keys(str(count))
+            except:
+                # 如果没找到输入框，默认送出当前选中的（通常是1个或全部）
+                pass
+
+            # 4. 点击赠送按钮
+            send_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), '赠送')] | //div[contains(@class, 'btn-send')]")))
             self.driver.execute_script("arguments[0].click();", send_btn)
+            time.sleep(2)
             
-            # 点击确定
-            confirm = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, cfg.GIFT["confirm_class"])))
-            self.driver.execute_script("arguments[0].click();", confirm)
             return f"🚀 送出 {count} 个"
         except Exception as e:
-            print(f"[DEBUG] 送礼出错详细: {str(e)[:50]}")
-            return "❌ 送礼超时"
+            return "❌ 送礼失败"
 
     def run(self):
         try:
@@ -171,21 +154,18 @@ class HuYaAuto:
                 
                 try:
                     self.driver.get(cfg.URLS["room_base"].format(rid))
-                    time.sleep(8)
+                    time.sleep(10) # 直播间加载较慢，给足时间
                     
-                    g_res = self.send_to_room(num)
-                    # 重新刷新一下房间页面进行打卡，防止送礼页面跳转破坏结构
-                    if "🚀" in g_res:
-                        self.driver.get(cfg.URLS["room_base"].format(rid))
-                        time.sleep(5)
-                    
+                    # 尝试送礼
+                    g_res = self.send_to_room_in_situ(num)
+                    # 执行打卡
                     c_res = self.daily_check_in()
                     
                     msg = f"{g_res}； {c_res} (房间 {rid})"
                     print(f"结果: {msg}")
                     self.msg_logs.append(msg)
                 except:
-                    self.msg_logs.append(f"❌ 房间 {rid} 失败")
+                    self.msg_logs.append(f"❌ 房间 {rid} 异常")
         finally:
             if hasattr(self, 'driver'): self.driver.quit()
             self.send_notification()
