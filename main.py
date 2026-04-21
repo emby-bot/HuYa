@@ -9,6 +9,7 @@ import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -20,7 +21,7 @@ class HuYaAuto:
     def __init__(self):
         self.debug = False
         self.msg_logs = []
-        self.enable_push = False  # 按照要求默认关闭
+        self.enable_push = False  # 严格按照要求默认关闭
         
         self.cookie = os.getenv('HUYA_COOKIE', '').strip()
         self.rooms = self._parse_rooms(os.getenv('HUYA_ROOMS', ''))
@@ -33,7 +34,7 @@ class HuYaAuto:
             self.rooms = [518512, 518511]
 
         self.driver = self._init_browser()
-        self.wait = WebDriverWait(self.driver, 15)
+        self.wait = WebDriverWait(self.driver, 10)
 
     def _parse_rooms(self, rooms_str):
         if not rooms_str: return []
@@ -53,7 +54,6 @@ class HuYaAuto:
         chrome_options.add_experimental_option('useAutomationExtension', False)
 
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-        driver.set_page_load_timeout(50)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
 
@@ -80,88 +80,98 @@ class HuYaAuto:
         except: return False
 
     def get_hl_count(self):
+        """采用原脚本的 JS 轮询查询方式"""
         print("[SEARCH] 正在查询虎粮数量...")
         self.driver.get(cfg.URLS["pay_index"])
-        time.sleep(4)
+        time.sleep(3)
         try:
             pack_tab = self.wait.until(EC.element_to_be_clickable((By.ID, cfg.PAY_PAGE["pack_tab"])))
             self.driver.execute_script("arguments[0].click();", pack_tab)
-            time.sleep(2)
+            
             n = self.driver.execute_script('''
-                let items = document.querySelectorAll('li[data-num]');
-                for (let item of items) {
-                    if ((item.title || item.innerText).includes('虎粮')) return item.getAttribute('data-num');
+                let maxWait = 20;
+                async function find() {
+                    const items = document.querySelectorAll('li[data-num]');
+                    for (let item of items) {
+                        if ((item.title || item.innerText).includes('虎粮')) return item.getAttribute('data-num');
+                    }
+                    return null;
                 }
-                return 0;
+                return (async () => {
+                    while(maxWait-- > 0) {
+                        let res = await find();
+                        if(res) return res;
+                        await new Promise(r => setTimeout(r, 250));
+                    }
+                    return 0;
+                })();
             ''')
             count = int(n) if n else 0
             print(f"[COUNT] 识别到虎粮: {count}")
             return count
         except: return 0
 
-    def send_to_room_in_situ(self, count):
-        """精准匹配 HTML 结构的送礼函数"""
+    def send_to_room_in_situ(self, rid, count):
+        """核心修复：采用原脚本的'接口跳转'识别法"""
         if count <= 0: return "无粮跳过"
         try:
-            # 1. 唤醒包裹
-            self.driver.execute_script("document.querySelector('#player-package-btn').click();")
+            # 1. 先进直播间拿参数
+            self.driver.get(cfg.URLS["room_base"].format(rid))
+            time.sleep(5)
+            
+            lp = self.driver.execute_script('return document.body.getAttribute("data-lp")')
+            gid = self.driver.execute_script('return document.body.getAttribute("data-gid")')
+            
+            if not lp or not gid:
+                print(f"  [DEBUG] 房间 {rid} 获取参数失败")
+                return "❌ 参数获取失败"
+
+            # 2. 跳转到原脚本推荐的礼物接口 URL (这是识别虎粮最稳的地方)
+            self.driver.get(cfg.URLS["gift_tab"].format(lp=lp, gid=gid))
             time.sleep(3)
 
-            # 2. 定位虎粮 (精准匹配 <p>虎粮</p> 并点击其父级 div.m-gift-item)
-            # 这里使用了 JS 的 XPath 查找，比单纯的 CSS 类名更稳
-            found = self.driver.execute_script('''
-                var pTags = document.querySelectorAll(".m-gift-item p");
-                for (let p of pTags) {
-                    if (p.innerText.trim() === "虎粮") {
-                        p.parentElement.click();
-                        return true;
-                    }
-                }
-                return false;
-            ''')
+            # 3. 定位虎粮项
+            items = self.wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, cfg.GIFT["item_class"])))
+            hu_liang = None
+            for item in items:
+                if "虎粮" in item.text:
+                    hu_liang = item
+                    break
             
-            if not found:
-                print("  [DEBUG] 无法在 m-gift-item 中定位到包含'虎粮'文字的 p 标签")
-                return "❌ 未找到虎粮"
-            
-            time.sleep(1.5)
+            if not hu_liang:
+                return "❌ 接口未发现虎粮"
 
-            # 3. 填入数量 (强制 Focus 注入)
-            set_res = self.driver.execute_script(f'''
-                var inp = document.querySelector("input.z-cur[placeholder*='自定义']");
-                if (inp) {{
-                    inp.focus();
-                    inp.value = "{count}";
-                    inp.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    return true;
-                }}
-                return false;
-            ''')
-            if not set_res: print("  [DEBUG] 数量输入框(自定义)定位失败")
+            # 4. 模拟原脚本的悬停与赠送动作
+            ActionChains(self.driver).move_to_element(hu_liang).pause(1).perform()
+            
+            inp = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, cfg.GIFT["input_css"])))
+            inp.click()
+            inp.clear()
+            inp.send_keys(str(count))
+
+            send_btn = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, cfg.GIFT["send_class"])))
+            send_btn.click()
             time.sleep(1)
 
-            # 4. 赠送 (使用原脚本 class)
-            send_btn = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, cfg.GIFT["send_class"])))
-            self.driver.execute_script("arguments[0].click();", send_btn)
-            
-            # 检查是否有二次确认弹窗
-            time.sleep(1.5)
-            self.driver.execute_script(f'''
-                var confirm = document.querySelector(".{cfg.GIFT['confirm_class']}");
-                if (confirm) confirm.click();
-            ''')
+            # 二次确认
+            try:
+                confirm = self.driver.find_element(By.CLASS_NAME, cfg.GIFT["confirm_class"])
+                confirm.click()
+            except: pass
 
             return f"🚀 送出 {count} 个"
         except Exception as e:
-            print(f"  [DEBUG] 过程异常: {str(e)[:100]}")
+            print(f"  [DEBUG] 赠送异常: {str(e)[:50]}")
             return "❌ 送礼失败"
 
-    def daily_check_in(self):
+    def daily_check_in(self, rid):
+        """打卡逻辑需要回到直播间主页"""
         try:
+            self.driver.get(cfg.URLS["room_base"].format(rid))
+            time.sleep(5)
             badge = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "FanClubHd--UAIAw8vo8FGSKqVwLp7A")))
             self.driver.execute_script("var e=document.createEvent('MouseEvents');e.initMouseEvent('mouseover',true,false,window,0,0,0,0,0,false,false,false,false,0,null);arguments[0].dispatchEvent(e);", badge)
-            time.sleep(3)
+            time.sleep(2)
             btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(@class, 'Btn--giEMQ9MN7LbLqKHP79BQ') and contains(text(), '打卡')]")))
             self.driver.execute_script("arguments[0].click();", btn)
             return "✅ 打卡成功"
@@ -174,17 +184,16 @@ class HuYaAuto:
             total = self.get_hl_count()
             for i, rid in enumerate(self.rooms):
                 num = (total // len(self.rooms) + (1 if i < (total % len(self.rooms)) else 0)) if total > 0 else 0
-                print(f"\n>>> 房间: {rid} (任务: 送礼{num} + 打卡)")
-                try:
-                    self.driver.get(cfg.URLS["room_base"].format(rid))
-                    time.sleep(12) # 增加直播间加载等待
-                    g_res = self.send_to_room_in_situ(num)
-                    c_res = self.daily_check_in()
-                    msg = f"{g_res}； {c_res} (房间 {rid})"
-                    print(f"结果: {msg}")
-                    self.msg_logs.append(msg)
-                except: self.msg_logs.append(f"❌ 房间 {rid} 异常")
-                time.sleep(3)
+                print(f"\n>>> 房间: {rid} (分配: {num})")
+                
+                # 先执行送礼 (基于接口跳转)
+                g_res = self.send_to_room_in_situ(rid, num)
+                # 再执行打卡 (基于页面主页)
+                c_res = self.daily_check_in(rid)
+                
+                msg = f"{g_res}； {c_res} (房间 {rid})"
+                print(f"结果: {msg}")
+                self.msg_logs.append(msg)
         finally:
             if hasattr(self, 'driver'): self.driver.quit()
             self.send_notification()
