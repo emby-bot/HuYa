@@ -11,7 +11,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
@@ -35,7 +34,7 @@ class HuYaAuto:
             self.rooms = [518512, 518511]
 
         self.driver = self._init_browser()
-        self.wait = WebDriverWait(self.driver, 15)
+        self.wait = WebDriverWait(self.driver, 10)
 
     def _parse_rooms(self, rooms_str):
         if not rooms_str: return []
@@ -83,11 +82,11 @@ class HuYaAuto:
     def get_hl_count(self):
         print("[SEARCH] 正在查询虎粮数量...")
         self.driver.get(cfg.URLS["pay_index"])
-        time.sleep(5)
+        time.sleep(4)
         try:
             pack_tab = self.wait.until(EC.element_to_be_clickable((By.ID, cfg.PAY_PAGE["pack_tab"])))
             self.driver.execute_script("arguments[0].click();", pack_tab)
-            time.sleep(3)
+            time.sleep(2)
             n = self.driver.execute_script('''
                 const items = document.querySelectorAll('li[data-num]');
                 for (let item of items) {
@@ -101,69 +100,64 @@ class HuYaAuto:
         except: return 0
 
     def send_to_room_in_situ(self, rid, count):
-        """终极修复版：双重点击锁死 + 异步请求保护"""
+        """回归原脚本最简逻辑版"""
         if count <= 0: return "无粮跳过"
         try:
-            # 1. 抓取参数
+            # 获取房间参数
             self.driver.get(cfg.URLS["room_base"].format(rid))
-            time.sleep(6)
+            time.sleep(5)
             lp = self.driver.execute_script('return document.body.getAttribute("data-lp")')
             gid = self.driver.execute_script('return document.body.getAttribute("data-gid")')
-            if not lp or not gid: return "❌ 参数缺失"
+            
+            if not lp or not gid:
+                return "❌ 参数获取失败"
 
-            # 2. 进入专用接口
+            # 跳转到礼物接口 (原脚本的核心稳健点)
             self.driver.get(cfg.URLS["gift_tab"].format(lp=lp, gid=gid))
-            time.sleep(5)
+            time.sleep(4)
 
-            # 3. 寻找虎粮并第一次点击（激活输入框）
+            # 查找并悬停虎粮
             items = self.wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, cfg.GIFT["item_class"])))
             hu_liang = next((i for i in items if "虎粮" in i.text), None)
-            if not hu_liang: return "❌ 接口无虎粮"
-            
-            self.driver.execute_script("arguments[0].scrollIntoView();", hu_liang)
-            self.driver.execute_script("arguments[0].click();", hu_liang)
+            if not hu_liang: return "❌ 未发现虎粮"
+
+            # 模拟原脚本动作流
+            ActionChains(self.driver).move_to_element(hu_liang).pause(1).click().perform()
             time.sleep(1)
 
-            # 4. 填入数量并强制触发页面响应
+            # 自定义数量
             inp = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, cfg.GIFT["input_css"])))
-            self.driver.execute_script("arguments[0].value = '';", inp)
+            inp.click()
+            inp.clear()
             inp.send_keys(str(count))
-            time.sleep(0.5)
-            inp.send_keys(Keys.TAB) # 换焦点触发 React/Vue 的变更监听
-            
-            # 5. 第二次点击虎粮（再次确认选中状态）
-            self.driver.execute_script("arguments[0].click();", hu_liang)
             time.sleep(1)
 
-            # 6. 点击赠送并处理二次确认
+            # 赠送
             send_btn = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, cfg.GIFT["send_class"])))
-            self.driver.execute_script("arguments[0].click();", send_btn)
-            
-            time.sleep(2)
-            # 处理可能的弹窗（使用 JS 捕获隐藏或延迟弹出的确认框）
-            self.driver.execute_script(f'''
-                let confirm = document.querySelector(".{cfg.GIFT['confirm_class']}");
-                if (confirm && confirm.offsetParent !== null) confirm.click();
-            ''')
+            send_btn.click()
+            time.sleep(1)
 
-            # 7. 关键：原地等待网络请求完成，不立即跳转
-            print(f"  [WAIT] 等待房间 {rid} 请求结算...")
-            time.sleep(7) 
-            
+            # 二次确认 (原脚本逻辑)
+            try:
+                confirm = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, cfg.GIFT["confirm_class"])))
+                confirm.click()
+            except: pass
+
+            # 解决第一个房间不成功的关键：赠送完后强制原地停留，不立即 get(room_base)
+            time.sleep(6) 
             return f"🚀 送出 {count} 个"
         except Exception as e:
-            return f"❌ 过程异常"
+            return "❌ 送礼失败"
 
     def daily_check_in(self, rid):
         try:
             self.driver.get(cfg.URLS["room_base"].format(rid))
-            time.sleep(7)
+            time.sleep(6)
             badge = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "FanClubHd--UAIAw8vo8FGSKqVwLp7A")))
             self.driver.execute_script("var e=document.createEvent('MouseEvents');e.initMouseEvent('mouseover',true,false,window,0,0,0,0,0,false,false,false,false,0,null);arguments[0].dispatchEvent(e);", badge)
-            time.sleep(4)
+            time.sleep(3)
             btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(@class, 'Btn--giEMQ9MN7LbLqKHP79BQ') and contains(text(), '打卡')]")))
             self.driver.execute_script("arguments[0].click();", btn)
-            time.sleep(2)
             return "✅ 打卡成功"
         except: return "ℹ️ 已打卡"
 
@@ -172,23 +166,21 @@ class HuYaAuto:
         try:
             if not self.login(): return
             total = self.get_hl_count()
-            if total <= 0:
-                print("[DONE] 暂无虎粮")
-                return
+            if total <= 0: return
                 
             for i, rid in enumerate(self.rooms):
                 num = (total // len(self.rooms) + (1 if i < (total % len(self.rooms)) else 0))
                 print(f"\n>>> 房间: {rid} (目标: {num})")
                 
-                # 改动点：送礼之后增加足够的停顿
+                # 执行送礼
                 g_res = self.send_to_room_in_situ(rid, num)
+                # 执行打卡
                 c_res = self.daily_check_in(rid)
                 
                 msg = f"{g_res}； {c_res} (房间 {rid})"
                 print(f"结果: {msg}")
                 self.msg_logs.append(msg)
-                time.sleep(5) # 房间间歇
-                
+                time.sleep(2)
         finally:
             if hasattr(self, 'driver'): self.driver.quit()
             self.send_notification()
