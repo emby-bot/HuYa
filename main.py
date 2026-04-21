@@ -57,13 +57,6 @@ class HuYaAuto:
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
 
-    def send_notification(self):
-        if not self.enable_push or not self.send_key: return
-        try:
-            content = "\n\n".join(self.msg_logs)
-            requests.post(f'https://sctapi.ftqq.com/{self.send_key}.send', data={'text': '虎牙任务报告', 'desp': content}, timeout=10)
-        except: pass
-
     def login(self):
         print("[LOGIN] 正在登录...")
         try:
@@ -80,76 +73,85 @@ class HuYaAuto:
         except: return False
 
     def get_hl_count(self):
-        print("[SEARCH] 正在查询虎粮数量...")
+        print("[SEARCH] 查询虎粮数量...")
         self.driver.get(cfg.URLS["pay_index"])
-        time.sleep(4)
+        time.sleep(3)
         try:
             pack_tab = self.wait.until(EC.element_to_be_clickable((By.ID, cfg.PAY_PAGE["pack_tab"])))
-            self.driver.execute_script("arguments[0].click();", pack_tab)
+            pack_tab.click()
             time.sleep(2)
+            # 这里的 JS 获取数量是原脚本逻辑，非常稳
             n = self.driver.execute_script('''
                 const items = document.querySelectorAll('li[data-num]');
                 for (let item of items) {
-                    if ((item.title || item.innerText).includes('虎粮')) return item.getAttribute('data-num');
+                    if (item.innerText.includes('虎粮')) return item.getAttribute('data-num');
                 }
                 return 0;
             ''')
             count = int(n) if n else 0
-            print(f"[COUNT] 识别到虎粮: {count}")
+            print(f"[COUNT] 虎粮总数: {count}")
             return count
         except: return 0
 
     def send_to_room_in_situ(self, rid, count):
-        """回归原脚本最简逻辑版"""
+        """完全对齐原脚本的物理点击逻辑"""
         if count <= 0: return "无粮跳过"
         try:
-            # 获取房间参数
+            # 1. 进房拿参数
             self.driver.get(cfg.URLS["room_base"].format(rid))
             time.sleep(5)
             lp = self.driver.execute_script('return document.body.getAttribute("data-lp")')
             gid = self.driver.execute_script('return document.body.getAttribute("data-gid")')
             
-            if not lp or not gid:
-                return "❌ 参数获取失败"
+            if not lp or not gid: return "❌ 参数获取失败"
 
-            # 跳转到礼物接口 (原脚本的核心稳健点)
+            # 2. 进礼物接口 (原脚本最稳的环节)
             self.driver.get(cfg.URLS["gift_tab"].format(lp=lp, gid=gid))
             time.sleep(4)
 
-            # 查找并悬停虎粮
+            # 3. 查找虎粮 (EC.presence_of_all_elements_located 是原脚本写法)
             items = self.wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, cfg.GIFT["item_class"])))
-            hu_liang = next((i for i in items if "虎粮" in i.text), None)
-            if not hu_liang: return "❌ 未发现虎粮"
+            hu_liang = None
+            for item in items:
+                if "虎粮" in item.text:
+                    hu_liang = item
+                    break
+            
+            if not hu_liang: return "❌ 未找到虎粮"
 
-            # 模拟原脚本动作流
-            ActionChains(self.driver).move_to_element(hu_liang).pause(1).click().perform()
+            # 4. 模拟原脚本 ActionChains 悬停
+            ActionChains(self.driver).move_to_element(hu_liang).pause(1).perform()
             time.sleep(1)
 
-            # 自定义数量
+            # 5. 自定义数量
             inp = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, cfg.GIFT["input_css"])))
             inp.click()
             inp.clear()
             inp.send_keys(str(count))
             time.sleep(1)
 
-            # 赠送
+            # 6. 赠送
             send_btn = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, cfg.GIFT["send_class"])))
             send_btn.click()
             time.sleep(1)
 
-            # 二次确认 (原脚本逻辑)
-            try:
-                confirm = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, cfg.GIFT["confirm_class"])))
-                confirm.click()
-            except: pass
-
-            # 解决第一个房间不成功的关键：赠送完后强制原地停留，不立即 get(room_base)
-            time.sleep(6) 
+            # 7. 二次确认 (关键：原脚本是通过 wait 等待并点击)
+            confirm_btn = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, cfg.GIFT["confirm_class"])))
+            confirm_btn.click()
+            
+            # 核心改进：在此处强制原地等待！
+            # 只有这样才能确保第一个房间的 POST 请求不被 get() 打断
+            print(f"  [WAIT] 等待 {rid} 房间结算中...")
+            time.sleep(8) 
+            
             return f"🚀 送出 {count} 个"
         except Exception as e:
+            # 打印具体报错，方便 debug
+            print(f"  [DEBUG] 过程异常详情: {str(e)[:50]}")
             return "❌ 送礼失败"
 
     def daily_check_in(self, rid):
+        """打卡放在送礼完全结束后执行"""
         try:
             self.driver.get(cfg.URLS["room_base"].format(rid))
             time.sleep(6)
@@ -172,18 +174,14 @@ class HuYaAuto:
                 num = (total // len(self.rooms) + (1 if i < (total % len(self.rooms)) else 0))
                 print(f"\n>>> 房间: {rid} (目标: {num})")
                 
-                # 执行送礼
+                # 顺序：先送礼 (原地等待结算) -> 再去直播间打卡
                 g_res = self.send_to_room_in_situ(rid, num)
-                # 执行打卡
                 c_res = self.daily_check_in(rid)
                 
                 msg = f"{g_res}； {c_res} (房间 {rid})"
                 print(f"结果: {msg}")
-                self.msg_logs.append(msg)
-                time.sleep(2)
         finally:
             if hasattr(self, 'driver'): self.driver.quit()
-            self.send_notification()
 
 if __name__ == '__main__':
     HuYaAuto().run()
