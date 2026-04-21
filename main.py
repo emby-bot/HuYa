@@ -128,4 +128,73 @@ class HuYaAuto:
             hl_xpath = "//div[contains(@class, 'm-gift-item')]//p[text()='虎粮']/.."
             hl_item = self.wait.until(EC.presence_of_element_located((By.XPATH, hl_xpath)))
             self.driver.execute_script("arguments[0].click();", hl_item)
-            time
+            time.sleep(1.5)
+
+            # 3. 设置数量 (尝试操作数量输入框)
+            try:
+                # 寻找面板上的输入框或选择框
+                num_input = self.driver.find_element(By.CSS_SELECTOR, "input[placeholder*='数量'], .gift-count-input, .custom-input")
+                num_input.click()
+                num_input.send_keys(Keys.CONTROL + "a")
+                num_input.send_keys(Keys.BACKSPACE)
+                num_input.send_keys(str(count))
+                time.sleep(0.5)
+            except:
+                pass # 没找到输入框则尝试直接赠送默认数量
+
+            # 4. 点击赠送按钮
+            # 匹配包含“赠送”文字的按钮或 class
+            send_xpath = "//button[contains(text(), '赠送')] | //div[contains(@class, 'btn-send')] | //a[contains(@class, 'sendBtn')]"
+            send_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, send_xpath)))
+            self.driver.execute_script("arguments[0].click();", send_btn)
+            
+            # 5. 二次确认逻辑（如果有）
+            try:
+                time.sleep(1)
+                confirm = self.driver.find_element(By.XPATH, "//button[contains(text(), '确定')] | //div[contains(@class, 'confirm')]")
+                self.driver.execute_script("arguments[0].click();", confirm)
+            except:
+                pass
+                
+            return f"🚀 送出 {count} 个"
+        except Exception as e:
+            return "❌ 送礼失败"
+
+    def run(self):
+        try:
+            if not self.login(): return
+            total_hl = self.get_hl_count()
+            
+            n = len(self.rooms)
+            for i, rid in enumerate(self.rooms):
+                # 虎粮分配方案
+                num = (total_hl // n + (1 if i < (total_hl % n) else 0)) if total_hl > 0 else 0
+                print(f"\n>>> 房间: {rid} (任务: 送礼{num} + 打卡)")
+                
+                try:
+                    self.driver.get(cfg.URLS["room_base"].format(rid))
+                    # 关键：直播间加载慢，给足 10 秒等待
+                    time.sleep(10) 
+                    
+                    # 1. 尝试送礼
+                    g_res = self.send_to_room_in_situ(num)
+                    
+                    # 2. 执行打卡
+                    c_res = self.daily_check_in()
+                    
+                    msg = f"{g_res}； {c_res} (房间 {rid})"
+                    print(f"结果: {msg}")
+                    self.msg_logs.append(msg)
+                    
+                    # 每个房间间隔一下，防止太快被封
+                    time.sleep(3)
+                except Exception as e:
+                    print(f"房间 {rid} 执行异常: {str(e)[:50]}")
+                    self.msg_logs.append(f"❌ 房间 {rid} 异常")
+        finally:
+            if hasattr(self, 'driver'): self.driver.quit()
+            self.send_notification()
+            print("\n[EXIT] 任务结束，浏览器已关闭")
+
+if __name__ == '__main__':
+    HuYaAuto().run()
