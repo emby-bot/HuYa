@@ -21,7 +21,7 @@ class HuYaAuto:
     def __init__(self):
         # ============ 配置项 ============
         self.debug = False  # 开启调试
-        self.enable_push = False  # 推送开关关闭
+        self.enable_push = True  # 推送开关关闭
         # ================================
         
         self.msg_logs = []
