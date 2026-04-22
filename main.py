@@ -152,7 +152,7 @@ class HuYaAuto:
 
             print(f"  [WAIT] 正在结算房间 {rid}，原地等待 12 秒...")
             time.sleep(12) 
-            return f"🚀 送出 {count} 个"
+            return f"🚀 房间 {rid} 送出虎粮 {count} 个"
         except Exception as e:
             if self.debug: print(f"  [DEBUG] 送礼异常: {e}")
             return "❌ 过程异常"
@@ -189,7 +189,7 @@ class HuYaAuto:
                 g_res = self.send_to_room_in_situ(rid, num)
                 c_res = self.daily_check_in(rid)
                 
-                msg = f"房间 {rid}: {g_res}； {c_res}"
+                msg = f"{g_res}； {c_res}"
                 print(f"结果: {msg}")
                 self.msg_logs.append(msg)
                 time.sleep(2)
