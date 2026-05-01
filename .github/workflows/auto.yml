@@ -95,7 +95,7 @@ jobs:
           HUYA_COOKIE: ${{ secrets.HUYA_COOKIE }}
           HUYA_ROOMS: ${{ steps.get-rooms.outputs.rooms }}
           HUYA_GIFT_COUNT: ${{ steps.get-gift-count.outputs.gift_count }}
-          HUYA_CHECKIN_ONLY_ROOMS: ${{ steps.get-checkin-only-rooms.outputs.checkin_only_rooms }}
+          HUYA_CHECKIN_ONLY_ROOMS: ${{ vars.HUYA_CHECKIN_ONLY_ROOMS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HEADLESS: "true"
