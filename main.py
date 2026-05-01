@@ -36,11 +36,16 @@ class HuYaAuto:
         # >0 = 每个房间最多赠送这个数量，虎粮不足时后面的房间只打卡不送
         self.gift_count = self._parse_positive_int(os.getenv('HUYA_GIFT_COUNT', '0'), default=0)
 
-                # 指定只打卡不送虎粮的房间，英文逗号分隔
+        # 指定只打卡不送虎粮的房间，英文逗号分隔
         # 例如：HUYA_CHECKIN_ONLY_ROOMS=291787,518512
         self.checkin_only_rooms = set(
             self._parse_rooms(os.getenv('HUYA_CHECKIN_ONLY_ROOMS', ''))
         )
+
+        # 只打卡房间如果没写进 HUYA_ROOMS，也自动加入运行列表
+        for rid in self.checkin_only_rooms:
+            if rid not in self.rooms:
+                self.rooms.append(rid)
 
         if not self.cookie:
             print("[ERROR] 未设置 HUYA_COOKIE"); sys.exit(1)
@@ -166,7 +171,7 @@ class HuYaAuto:
         if total <= 0 or not self.rooms:
             return plan
 
-        # 排除只打卡房间，剩下的才参与送粮
+        # 只给非“只打卡房间”分配虎粮
         gift_rooms = [rid for rid in self.rooms if rid not in self.checkin_only_rooms]
 
         if not gift_rooms:
