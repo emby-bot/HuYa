@@ -81,7 +81,9 @@ jobs:
           HUYA_COOKIE: ${{ secrets.HUYA_COOKIE }}
           HUYA_ROOMS: ${{ steps.get-rooms.outputs.rooms }}
           HUYA_GIFT_COUNT: ${{ steps.get-gift-count.outputs.gift_count }}
-          SEND_KEY: ${{ secrets.SEND_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HEADLESS: "true"
+          PYTHONUNBUFFERED: "1"
         run: |
-          xvfb-run -a python main.py
+          xvfb-run -a python -u main.py
