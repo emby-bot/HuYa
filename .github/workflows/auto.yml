@@ -14,6 +14,10 @@ on:
         description: '每个房间最多赠送虎粮数量；留空则使用 Secrets 里的 HUYA_GIFT_COUNT'
         required: false
         default: ''
+      checkin_only_rooms:
+        description: '只打卡不送虎粮的房间号，逗号分隔；留空则使用 Variables 里的 HUYA_CHECKIN_ONLY_ROOMS'
+        required: false
+        default: ''
 
 jobs:
   send-hl:
@@ -75,12 +79,23 @@ jobs:
             echo "gift_count=${{ secrets.HUYA_GIFT_COUNT }}" >> $GITHUB_OUTPUT
           fi
 
+      # 获取只打卡不送虎粮的房间号
+      - name: 获取只打卡房间号
+        id: get-checkin-only-rooms
+        run: |
+          if [ -n "${{ github.event.inputs.checkin_only_rooms }}" ]; then
+            echo "checkin_only_rooms=${{ github.event.inputs.checkin_only_rooms }}" >> $GITHUB_OUTPUT
+          else
+            echo "checkin_only_rooms=${{ vars.HUYA_CHECKIN_ONLY_ROOMS }}" >> $GITHUB_OUTPUT
+          fi
+
       # 启动虚拟桌面 + 运行脚本
       - name: 运行虎粮发放和打卡
         env:
           HUYA_COOKIE: ${{ secrets.HUYA_COOKIE }}
           HUYA_ROOMS: ${{ steps.get-rooms.outputs.rooms }}
           HUYA_GIFT_COUNT: ${{ steps.get-gift-count.outputs.gift_count }}
+          HUYA_CHECKIN_ONLY_ROOMS: ${{ steps.get-checkin-only-rooms.outputs.checkin_only_rooms }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HEADLESS: "true"
