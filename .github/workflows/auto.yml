@@ -3,7 +3,7 @@ name: 虎牙虎粮自动发放
 on:
   schedule:
     # 每天北京时间 00:30 运行，对应 UTC 16:30
-    - cron: '*/5 * * * *'
+    - cron: '30 16 * * *'
   workflow_dispatch:
     inputs:
       rooms:
