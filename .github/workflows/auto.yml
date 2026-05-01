@@ -62,11 +62,11 @@ jobs:
           if [ -n "${{ github.event.inputs.rooms }}" ]; then
             echo "rooms=${{ github.event.inputs.rooms }}" >> $GITHUB_OUTPUT
           else
-            if [ -z "${{ secrets.HUYA_ROOMS }}" ]; then
-              echo "❌ 未配置 HUYA_ROOMS"
+            if [ -z "${{ vars.HUYA_ROOMS }}" ]; then
+              echo "❌ 未配置 Variables: HUYA_ROOMS"
               exit 1
             fi
-            echo "rooms=${{ secrets.HUYA_ROOMS }}" >> $GITHUB_OUTPUT
+            echo "rooms=${{ vars.HUYA_ROOMS }}" >> $GITHUB_OUTPUT
           fi
 
       # 获取自定义赠送数量
@@ -76,7 +76,7 @@ jobs:
           if [ -n "${{ github.event.inputs.gift_count }}" ]; then
             echo "gift_count=${{ github.event.inputs.gift_count }}" >> $GITHUB_OUTPUT
           else
-            echo "gift_count=${{ secrets.HUYA_GIFT_COUNT }}" >> $GITHUB_OUTPUT
+            echo "gift_count=${{ vars.HUYA_GIFT_COUNT }}" >> $GITHUB_OUTPUT
           fi
 
       # 获取只打卡不送虎粮的房间号
