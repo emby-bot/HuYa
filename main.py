@@ -27,7 +27,9 @@ class HuYaAuto:
         self.msg_logs = []
         self.cookie = os.getenv('HUYA_COOKIE', '').strip()
         self.rooms = self._parse_rooms(os.getenv('HUYA_ROOMS', ''))
-        self.send_key = os.getenv('SEND_KEY', '').strip()
+        # Telegram 推送配置
+        self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '').strip()
+        self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID', '').strip()
 
         # 自定义每个房间赠送虎粮数量：
         # 0 或留空 = 自动把背包虎粮平均分配到所有房间
@@ -68,25 +70,41 @@ class HuYaAuto:
         return driver
 
     def send_notification(self):
-        """Server酱推送方法"""
-        if not self.enable_push or not self.send_key:
+        """Telegram 推送方法"""
+        if not self.enable_push:
             return
 
-        print("[PUSH] 正在发送推送通知...")
+        if not self.telegram_bot_token or not self.telegram_chat_id:
+            print("[PUSH] 未配置 TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID，跳过 Telegram 推送")
+            return
+
+        print("[PUSH] 正在发送 Telegram 推送通知...")
         try:
             content = "\n\n".join(self.msg_logs)
-            url = f"https://sctapi.ftqq.com/{self.send_key}.send"
+            text = "📣 虎牙自动任务报告\n\n" + content
+
+            # Telegram 单条消息最长 4096 字符，这里预留一点空间，避免推送失败
+            if len(text) > 3900:
+                text = text[:3900] + "\n\n……内容过长，已截断"
+
+            url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
             data = {
-                "title": "虎牙自动任务报告",
-                "desp": content
+                "chat_id": self.telegram_chat_id,
+                "text": text,
+                "disable_web_page_preview": True,
             }
-            res = requests.post(url, data=data, timeout=10)
-            if res.status_code == 200:
-                print("[SUCCESS] 推送发送成功")
+            res = requests.post(url, data=data, timeout=15)
+            try:
+                result = res.json()
+            except Exception:
+                result = {}
+
+            if res.status_code == 200 and result.get("ok") is True:
+                print("[SUCCESS] Telegram 推送发送成功")
             else:
-                print(f"[FAILED] 推送失败，状态码: {res.status_code}")
+                print(f"[FAILED] Telegram 推送失败，状态码: {res.status_code}，响应: {res.text}")
         except Exception as e:
-            print(f"[ERROR] 推送异常: {e}")
+            print(f"[ERROR] Telegram 推送异常: {e}")
 
     def login(self):
         print("[LOGIN] 正在登录...")
