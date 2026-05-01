@@ -36,6 +36,12 @@ class HuYaAuto:
         # >0 = 每个房间最多赠送这个数量，虎粮不足时后面的房间只打卡不送
         self.gift_count = self._parse_positive_int(os.getenv('HUYA_GIFT_COUNT', '0'), default=0)
 
+                # 指定只打卡不送虎粮的房间，英文逗号分隔
+        # 例如：HUYA_CHECKIN_ONLY_ROOMS=291787,518512
+        self.checkin_only_rooms = set(
+            self._parse_rooms(os.getenv('HUYA_CHECKIN_ONLY_ROOMS', ''))
+        )
+
         if not self.cookie:
             print("[ERROR] 未设置 HUYA_COOKIE"); sys.exit(1)
         if not self.rooms:
@@ -151,16 +157,24 @@ class HuYaAuto:
         """
         生成每个房间要赠送的虎粮数量。
         - total <= 0：所有房间都不送，但照常打卡
-        - HUYA_GIFT_COUNT > 0：每个房间最多送指定数量，剩余不足则后面的房间只打卡
-        - HUYA_GIFT_COUNT 未设置/为 0：保持原来的平均分配逻辑
+        - HUYA_CHECKIN_ONLY_ROOMS：这些房间只打卡，不参与虎粮分配
+        - HUYA_GIFT_COUNT > 0：每个可送粮房间最多送指定数量
+        - HUYA_GIFT_COUNT 未设置/为 0：只在可送粮房间里平均分配
         """
         plan = {rid: 0 for rid in self.rooms}
+
         if total <= 0 or not self.rooms:
+            return plan
+
+        # 排除只打卡房间，剩下的才参与送粮
+        gift_rooms = [rid for rid in self.rooms if rid not in self.checkin_only_rooms]
+
+        if not gift_rooms:
             return plan
 
         if self.gift_count > 0:
             remaining = total
-            for rid in self.rooms:
+            for rid in gift_rooms:
                 if remaining <= 0:
                     break
                 num = min(self.gift_count, remaining)
@@ -168,10 +182,12 @@ class HuYaAuto:
                 remaining -= num
             return plan
 
-        base = total // len(self.rooms)
-        extra = total % len(self.rooms)
-        for i, rid in enumerate(self.rooms):
+        base = total // len(gift_rooms)
+        extra = total % len(gift_rooms)
+
+        for i, rid in enumerate(gift_rooms):
             plan[rid] = base + (1 if i < extra else 0)
+
         return plan
 
     def send_to_room_in_situ(self, rid, count):
@@ -255,15 +271,27 @@ class HuYaAuto:
             if total <= 0:
                 print("[INFO] 暂无虎粮，但仍会进入所有房间打卡")
 
-            for rid in self.rooms:
-                num = gift_plan.get(rid, 0)
-                print(f"\n>>> 房间: {rid} (计划赠送虎粮: {num})")
+            if self.checkin_only_rooms:
+                only_text = ",".join(str(x) for x in sorted(self.checkin_only_rooms))
+                self.msg_logs.append(f"只打卡房间: {only_text}")
+                print(f"[CONFIG] 只打卡房间：{only_text}")
 
-                # 核心改动：无论有没有虎粮，都进入房间打卡
+            for rid in self.rooms:
+                is_checkin_only = rid in self.checkin_only_rooms
+                num = 0 if is_checkin_only else gift_plan.get(rid, 0)
+
+                if is_checkin_only:
+                    print(f"\n>>> 房间: {rid} (只打卡，不赠送虎粮)")
+                else:
+                    print(f"\n>>> 房间: {rid} (计划赠送虎粮: {num})")
+
+                # 无论是否送粮，都进入房间打卡
                 c_res = self.daily_check_in(rid)
 
-                # 有分配到虎粮才赠送；没虎粮/没分配也不影响打卡
-                g_res = self.send_to_room_in_situ(rid, num) if num > 0 else "🎁 未赠送虎粮（无虎粮或未分配数量）"
+                if is_checkin_only:
+                    g_res = "🎁 已设置为只打卡房间，跳过赠送虎粮"
+                else:
+                    g_res = self.send_to_room_in_situ(rid, num) if num > 0 else "🎁 未赠送虎粮（无虎粮或未分配数量）"
 
                 msg = f"房间 {rid}: {c_res}；{g_res}"
                 print(f"结果: {msg}")
