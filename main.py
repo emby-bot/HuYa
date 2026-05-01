@@ -278,7 +278,6 @@ class HuYaAuto:
 
             if self.checkin_only_rooms:
                 only_text = ",".join(str(x) for x in sorted(self.checkin_only_rooms))
-                self.msg_logs.append(f"只打卡房间: {only_text}")
                 print(f"[CONFIG] 只打卡房间：{only_text}")
 
             for rid in self.rooms:
