@@ -1,6 +1,6 @@
 name: 测试定时触发
 
-on:
+"on":
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
@@ -11,5 +11,6 @@ jobs:
     steps:
       - name: 打印时间
         run: |
+          echo "event=${{ github.event_name }}"
           date
           echo "schedule test ok"
